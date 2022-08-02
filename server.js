@@ -2,36 +2,84 @@ const express = require("express");
 const app = express();
 const port = process.env.PORT || 3000;
 
-const haversine = require('haversine-distance')
 const { Heap } = require('heap-js')
 
-const BAYWHEELS_URL = "https://api.citybik.es/v2/networks/bay-wheels?fields=stations"
+// https://api.citybik.es/v2/
+const fetchBikeStations =
+  async (url = "https://api.citybik.es/v2/networks/bay-wheels?fields=stations") => (
+    (await (await fetch(url)).json()).network.stations
+  )
 
-const calcDistance = (currentLoc) => (minHeap, station) => {
-  const stationLoc = { latitude: station["latitude"] longitude: station["longitude"] }
-  const dist = haversine(currentLoc, stationLoc)
-  minHeap.push({ dist, ...station });
-  return minHeap;
+// Haversine calculation
+const haversineDistance = (coordinates1, coordinates2) => {
+  const {latitude: lat1, longitude: lon1} = coordinates1
+  const {latitude: lat2, longitude: lon2} = coordinates2
+
+  const RADIUS_OF_EARTH_IN_KM = 6371;
+  const distance = (a, b) => (Math.PI / 180) * (a - b);
+  const toRadian = angle => (Math.PI / 180) * angle;
+
+  const dLat = distance(lat2, lat1);
+  const dLon = distance(lon2, lon1);
+
+  const lat1Radian = toRadian(lat1);
+  const lat2Radian = toRadian(lat2);
+
+
+  // Haversine Formula
+  const a =
+    Math.pow(Math.sin(dLat / 2), 2) +
+    Math.pow(Math.sin(dLon / 2), 2) * Math.cos(lat1Radian) * Math.cos(lat2Radian);
+  const c = 2 * Math.asin(Math.sqrt(a));
+
+  return RADIUS_OF_EARTH_IN_KM * c;
+};
+
+
+const roundFloat = (n, precision = 8) => {
+  const factor = Math.pow(10, precision)
+  return Math.round(n * factor) / factor
 }
 
-const distanceComparator = ({ dist: dist1 }, { dist: dist2 }) => Math.abs(dist1 - dist2)
+const distanceComparator = ({distance: a}, {distance: b}) => Math.abs(a - b)
 
-const findFreeBikesNearLoc = (location) => {
-  const bikeStations = fetch(BAYWHEELS_URL)
-    .then((response) => JSON.parse(response.json()))
-    .then((obj) => return obj.network.stations);
-
-  const stationHeap = bikeStations.reduce(
-    calcDistance(currentLoc),
-    new Heap(distanceComparator)
-  );
-
-  return [stationHeap.pop(), stationHeap.pop(), stationHeap.pop()];
+const findNearbyStations = (fromLocation, toStations, options = {}) => {
+  const computeDistance = station => (
+    roundFloat(haversineDistance(fromLocation, station), options.precision)
+  )
+  const nearbyStations = toStations.map(
+    station => {
+      const distanceToStation = computeDistance(station)
+      const { name, latitude, longitude, ...rest } = station
+      return {
+        distance: distanceToStation,
+        ...{ name, latitude, longitude },
+        ...(options.strippedData ? {} : rest)
+      }
+    }
+  )
+  return Heap.nsmallest(options.count, nearbyStations, distanceComparator)
 }
 
-app.get(["/", "/free"], (req, resp) => {
-  const currentLoc = { latitude: req.header("lat"), longitude: req.header("long") }
-  resp.send(findFreeBikesNearLoc(currentLoc))
-});
+app.get("/", async (req, resp) => {
+  const { latitude, longitude, ...rest } = req.headers
+  if (!latitude || !longitude) { return [] }
+
+  const allStations = await fetchBikeStations()
+  const nearbyStations = findNearbyStations(
+    {latitude, longitude}, allStations, { count: 5, strippedData: true, free: false, ...rest }
+  )
+  resp.send(nearbyStations)
+})
+
+app.get("/test", (req, resp) => {
+  const { latitude, longitude } = req.headers
+  const fromLocation = {latitude, longitude}
+
+  const nearbyStations = findNearbyStations(
+    {latitude, longitude}, [p1, p2, ...OTHERS], {count: 3, strippedData: true}
+  )
+  resp.send(nearbyStations)
+})
 
 app.listen(port, () => console.log(`NearbyBikeSearch app listening on port ${port}!`))
