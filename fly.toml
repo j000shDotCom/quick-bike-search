@@ -1,6 +1,8 @@
-# fly.toml file generated for nearby-bike-search on 2022-07-27T01:51:45-07:00
+# fly.toml file generated for quick-bike-search on 2022-08-03T22:26:56-07:00
 
-app = "fly-builder-falling-lake-8568"
+# All settings at https://fly.io/docs/reference/configuration/
+
+app = "quick-bike-search"
 kill_signal = "SIGINT"
 kill_timeout = 5
 processes = []
