@@ -3,18 +3,15 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 const { Heap } = require('heap-js')
+const bigDecimal = require('js-big-decimal');
 
 // https://api.citybik.es/v2/
 const fetchBikeStations =
-  async (url = "https://api.citybik.es/v2/networks/bay-wheels?fields=stations") => (
+  async (url = "https://api.citybik.es/v2/networks/bay-wheels?fields=stations") =>
     (await (await fetch(url)).json()).network.stations
-  )
 
 // Haversine calculation
-const haversineDistance = (coordinates1, coordinates2) => {
-  const {latitude: lat1, longitude: lon1} = coordinates1
-  const {latitude: lat2, longitude: lon2} = coordinates2
-
+const haversineDistance = ({latitude: lat1, longitude: lon1}) => ({latitude: lat2, longitude: lon2}) => {
   const RADIUS_OF_EARTH_IN_KM = 6371;
   const distance = (a, b) => (Math.PI / 180) * (a - b);
   const toRadian = angle => (Math.PI / 180) * angle;
@@ -33,52 +30,49 @@ const haversineDistance = (coordinates1, coordinates2) => {
   const c = 2 * Math.asin(Math.sqrt(a));
 
   return RADIUS_OF_EARTH_IN_KM * c;
-};
-
-
-const roundFloat = (n, precision = 8) => {
-  const factor = Math.pow(10, precision)
-  return Math.round(n * factor) / factor
 }
 
-const distanceComparator = ({distance: a}, {distance: b}) => Math.abs(a - b)
+const decimal0 = new bigDecimal("0")
 
-const findNearbyStations = (fromLocation, toStations, options = {}) => {
-  const computeDistance = station => (
-    roundFloat(haversineDistance(fromLocation, station), options.precision)
-  )
-  const nearbyStations = toStations.map(
-    station => {
-      const distanceToStation = computeDistance(station)
-      const { name, latitude, longitude, ...rest } = station
-      return {
-        distance: distanceToStation,
-        ...{ name, latitude, longitude },
-        ...(options.strippedData ? {} : rest)
-      }
+const absDecimal = n => (n.compareTo(decimal0) < 0 ? n.negate() : n)
+
+const distanceComparator = ({distance: a}, {distance: b}) => a.subtract(b)
+
+const findNearbyStations = (currentLocation, bikeStationLocations, options = {}) => {
+  const computeDistanceFromCurrentLocation = haversineDistance(currentLocation)
+
+  const nearbyStations = bikeStationLocations.map(({ latitude, longitude, ...rest }) => {
+    const latDecimal = new bigDecimal('' + latitude)
+    const longDecimal = new bigDecimal('' + longitude)
+
+    return {
+      distance: new bigDecimal('' + computeDistanceFromCurrentLocation({ latitude, longitude })),
+      latitude: latDecimal,
+      longitude: longDecimal,
+      ...rest
     }
-  )
+  })
+
+  const transformStationData = ({ name, distance, latitude, longitude, ...rest }) => ({
+    name,
+    distance: distance.getValue(),
+    latitude: latitude.getValue(),
+    longitude: longitude.getValue(),
+    ...(options.verbose ? rest : {})
+  })
+
   return Heap.nsmallest(options.count, nearbyStations, distanceComparator)
+    .sort(({distance: a}, {distance: b}) => a.compareTo(b))
+    .map(transformStationData)
 }
 
 app.get("/", async (req, resp) => {
   const { latitude, longitude, ...rest } = req.headers
   if (!latitude || !longitude) { return [] }
 
+  const currentLocation = {latitude, longitude}
   const allStations = await fetchBikeStations()
-  const nearbyStations = findNearbyStations(
-    {latitude, longitude}, allStations, { count: 5, strippedData: true, free: false, ...rest }
-  )
-  resp.send(nearbyStations)
-})
-
-app.get("/test", (req, resp) => {
-  const { latitude, longitude } = req.headers
-  const fromLocation = {latitude, longitude}
-
-  const nearbyStations = findNearbyStations(
-    {latitude, longitude}, [p1, p2, ...OTHERS], {count: 3, strippedData: true}
-  )
+  const nearbyStations = findNearbyStations(currentLocation, allStations, rest)
   resp.send(nearbyStations)
 })
 
