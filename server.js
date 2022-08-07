@@ -4,6 +4,8 @@ const port = process.env.PORT || 3000;
 
 const bigDecimal = require('js-big-decimal');
 
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
 // https://api.citybik.es/v2/
 const fetchBikeStations =
   async (url = "https://api.citybik.es/v2/networks/bay-wheels?fields=stations") =>
